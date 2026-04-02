@@ -2,7 +2,6 @@ const express = require('express');
 const sql = require('mssql');
 const app = express();
 
-// middleware (IMPORTANT for POST)
 app.use(express.json());
 
 // DB config
@@ -17,35 +16,67 @@ const config = {
     }
 };
 
-// 👉 Connect once (better practice)
-sql.connect(config).then(() => {
-    console.log("Connected to DB ✅");
-}).catch(err => console.log(err));
+// 👉 Use connection pool properly
+let pool;
+async function connectDB() {
+    try {
+        pool = await sql.connect(config);
+        console.log("Connected to DB ✅");
+    } catch (err) {
+        console.error("DB Connection Error:", err);
+    }
+}
+connectDB();
 
 // 👉 GET all users
 app.get('/data', async (req, res) => {
     try {
-        const result = await sql.query`SELECT * FROM Users`;
+        const result = await pool.request().query("SELECT * FROM Users");
         res.json(result.recordset);
     } catch (err) {
-        res.status(500).send(err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// 👉 ADD user (POST)
+// 👉 ADD user
 app.post('/addUser', async (req, res) => {
     try {
         const { name } = req.body;
 
         if (!name) {
-            return res.status(400).send("Name is required");
+            return res.status(400).json({ error: "Name is required" });
         }
 
-        await sql.query`INSERT INTO Users (name) VALUES (${name})`;
+        await pool.request()
+            .input('name', sql.VarChar, name)
+            .query("INSERT INTO Users (name) VALUES (@name)");
 
-        res.send("User added successfully ✅");
+        res.json({ message: "User added successfully ✅" });
     } catch (err) {
-        res.status(500).send(err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 👉 DELETE user
+app.delete('/deleteUser/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+
+        if (!id) {
+            return res.status(400).json({ error: "User ID is required" });
+        }
+
+        const result = await pool.request()
+            .input('id', sql.Int, id)
+            .query("DELETE FROM Users WHERE id = @id");
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        res.json({ message: "User deleted successfully ✅" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -54,6 +85,5 @@ app.get('/', (req, res) => {
     res.send("Backend is running ✅");
 });
 
-// start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server started on ${PORT}`));
